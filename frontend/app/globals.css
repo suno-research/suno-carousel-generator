@@ -1,0 +1,38 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+  --background: #ffffff;
+  --foreground: #0f1419;
+}
+
+html {
+  background: var(--background);
+  color: var(--foreground);
+}
+
+body {
+  color: var(--foreground);
+  background: var(--background);
+  font-family: var(--font-inter), "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+[contenteditable]:focus {
+  outline: 2px solid #d42126;
+  outline-offset: 4px;
+  border-radius: 4px;
+}
+
+/* Handle de resize da imagem: aparece no hover */
+[data-slide-canvas] > div[style*="ns-resize"]:hover .resize-handle-bar,
+[data-slide-canvas] > div[style*="ns-resize"]:active .resize-handle-bar {
+  opacity: 1 !important;
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+}
