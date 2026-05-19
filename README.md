@@ -133,6 +133,75 @@ suno-carousel-generator/
         └── suno-logo.svg
 ```
 
+## Deploy (produção)
+
+Stack recomendada: **Vercel** (frontend) + **Render** (backend), com auth Google via NextAuth restrito a `@suno.com.br`.
+
+### 1. OAuth Client Google
+
+1. https://console.cloud.google.com/apis/credentials
+2. **CREATE CREDENTIALS** → **OAuth client ID**
+3. Application type: **Web application**
+4. Name: `Suno Carrossel`
+5. **Authorized JavaScript origins**:
+   - `http://localhost:3001`
+   - `https://SEU_DOMINIO.vercel.app` (depois do deploy)
+6. **Authorized redirect URIs**:
+   - `http://localhost:3001/api/auth/callback/google`
+   - `https://SEU_DOMINIO.vercel.app/api/auth/callback/google`
+7. Copia o **Client ID** e **Client secret**
+
+### 2. Deploy Backend (Render)
+
+1. https://render.com → **New** → **Web Service**
+2. Connect GitHub → escolhe `suno-research/suno-carousel-generator`
+3. Configurações:
+   - **Name:** `suno-carousel-backend`
+   - **Root Directory:** `backend`
+   - **Runtime:** Python 3
+   - **Build Command:** `pip install -r requirements.txt`
+   - **Start Command:** `uvicorn main:app --host 0.0.0.0 --port $PORT`
+4. **Environment variables** (clica "Advanced" → "Add Environment Variable"):
+   - `ANTHROPIC_API_KEY` — chave nova da Anthropic
+   - `ANTHROPIC_MODEL` — `claude-sonnet-4-6`
+   - `GOOGLE_API_KEY` — chave nova do Google
+   - `GOOGLE_CSE_ID` — `431fe653802664088`
+   - `UNSPLASH_ACCESS_KEY` — chave nova do Unsplash
+   - `CORS_ALLOWED_ORIGINS` — preencher DEPOIS do deploy do frontend (URL Vercel)
+5. Create Web Service. Depois de ~5min, anota a URL (ex: `https://suno-carousel-backend.onrender.com`).
+
+### 3. Deploy Frontend (Vercel)
+
+1. https://vercel.com → **Add New** → **Project**
+2. Import `suno-research/suno-carousel-generator`
+3. Configurações:
+   - **Root Directory:** `frontend`
+   - **Framework Preset:** Next.js (auto-detectado)
+4. **Environment variables**:
+   - `NEXT_PUBLIC_BACKEND_URL` — URL do Render do passo 2
+   - `NEXTAUTH_SECRET` — rode `openssl rand -base64 32` no terminal e cola
+   - `NEXTAUTH_URL` — preencher DEPOIS (URL final da Vercel)
+   - `GOOGLE_CLIENT_ID` — do passo 1
+   - `GOOGLE_CLIENT_SECRET` — do passo 1
+5. Deploy. Depois anota a URL (ex: `https://suno-carousel-generator.vercel.app`).
+6. Volta nas env vars e preenche `NEXTAUTH_URL` com a URL final. Faz redeploy.
+
+### 4. Conectar tudo
+
+1. **Backend** (Render): adiciona a URL Vercel em `CORS_ALLOWED_ORIGINS`
+2. **OAuth Google**: adiciona a URL Vercel em "Authorized origins" e o callback `/api/auth/callback/google` em "Authorized redirect URIs"
+3. Testa logando com email `@suno.com.br`
+
+### Custo aproximado (uso pessoal)
+
+- Vercel: free tier
+- Render: free tier (com cold start) ou Starter $7/mês (sempre on)
+- Anthropic: ~$0.05/carrossel
+- Google CSE: 100 buscas/dia grátis
+- Unsplash: 50 req/hora grátis
+
+---
+
 ## Roadmap
 
 - [ ] Histórico de carrosséis gerados
