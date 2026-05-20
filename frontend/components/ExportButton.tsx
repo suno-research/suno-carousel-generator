@@ -1,12 +1,31 @@
 'use client';
 
 import { useState } from 'react';
-import html2canvas from 'html2canvas';
+import { domToBlob } from 'modern-screenshot';
 import JSZip from 'jszip';
 import { saveAs } from 'file-saver';
 import { useCarrosselStore } from '@/lib/store';
 import SlideCanvas from './SlideCanvas';
 import { createRoot } from 'react-dom/client';
+
+/** Fetch da imagem externa convertida em data URL pra evitar CORS/taint no canvas. */
+async function imgToDataUrl(url: string): Promise<string | null> {
+  if (!url || url.startsWith('data:')) return url;
+  try {
+    const res = await fetch(url, { mode: 'cors' });
+    if (!res.ok) return null;
+    const blob = await res.blob();
+    return await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result));
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+  } catch (e) {
+    console.warn('[export] failed to fetch image as data url:', url, e);
+    return null;
+  }
+}
 
 export default function ExportButton() {
   const carrossel = useCarrosselStore((s) => s.carrossel);
@@ -19,26 +38,37 @@ export default function ExportButton() {
     setProgress(0);
 
     try {
-      // Garante que webfonts estejam carregadas antes do html2canvas
-      // (sem isso o texto pode quebrar diferente no PNG vs preview)
+      // 1) Aguarda webfonts carregarem (texto idêntico ao preview)
       if (typeof document.fonts?.ready?.then === 'function') {
         await document.fonts.ready;
       }
 
+      // 2) Pré-fetch das imagens externas em data URL.
+      // Garante que o snapshot seja 100% local, sem CORS/taint.
+      const slidesWithDataUrls = await Promise.all(
+        carrossel.slides.map(async (s) => {
+          if (!s.imagem_url || s.imagem_url.startsWith('data:')) return s;
+          const dataUrl = await imgToDataUrl(s.imagem_url);
+          return dataUrl ? { ...s, imagem_url: dataUrl } : s;
+        })
+      );
+
       const zip = new JSZip();
       const offscreen = document.createElement('div');
       offscreen.style.cssText =
-        'position:fixed;left:-99999px;top:0;width:1080px;height:1350px;pointer-events:none;';
+        'position:fixed;left:-99999px;top:0;width:1080px;height:1350px;pointer-events:none;background:#fff;';
       document.body.appendChild(offscreen);
 
-      for (let i = 0; i < carrossel.slides.length; i++) {
-        const slide = carrossel.slides[i];
+      for (let i = 0; i < slidesWithDataUrls.length; i++) {
+        const slide = slidesWithDataUrls[i];
         const container = document.createElement('div');
         offscreen.appendChild(container);
         const root = createRoot(container);
 
+        // Render do slide em scale=1 (1080x1350 nativo)
         await new Promise<void>((resolve) => {
           root.render(<SlideCanvas slide={slide} scale={1} />);
+          // 2 RAFs garantem layout + paint
           requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
         });
 
@@ -49,42 +79,48 @@ export default function ExportButton() {
           continue;
         }
 
-        // Espera todas as imagens internas carregarem (logo + foto do slide).
-        // Sem isso o html2canvas pode rasterizar antes da imagem, e o PNG sai
-        // diferente do preview ou com slot vazio.
+        // Aguarda todas as <img> internas (logo + foto) terminarem de decode
         const imgs = Array.from(canvasNode.querySelectorAll('img'));
         await Promise.all(
-          imgs.map(
-            (img) =>
-              new Promise<void>((res) => {
-                if (img.complete && img.naturalHeight > 0) return res();
-                img.onload = () => res();
-                img.onerror = () => res();
-                setTimeout(res, 8000); // safety timeout: 8s por imagem
-              })
-          )
+          imgs.map(async (img) => {
+            if (img.complete && img.naturalHeight > 0) {
+              try {
+                await img.decode();
+              } catch {
+                /* ignore */
+              }
+              return;
+            }
+            await new Promise<void>((res) => {
+              img.onload = () => res();
+              img.onerror = () => res();
+              setTimeout(res, 8000);
+            });
+            try {
+              await img.decode();
+            } catch {
+              /* ignore */
+            }
+          })
         );
 
-        const canvas = await html2canvas(canvasNode, {
+        // modern-screenshot: suporte muito melhor a object-fit, transform e CSS moderno
+        // do que html2canvas. scale=2 dá nitidez Retina sem aumentar a saída final.
+        const blob = await domToBlob(canvasNode, {
           width: 1080,
           height: 1350,
-          scale: 1,
-          backgroundColor: null,
-          useCORS: true,
-          allowTaint: false,
-          logging: false,
-          imageTimeout: 10000,
+          scale: 2,
+          backgroundColor: '#ffffff',
+          type: 'image/png',
+          quality: 1,
         });
 
-        const blob: Blob = await new Promise((res) =>
-          canvas.toBlob((b) => res(b!), 'image/png', 0.95)
-        );
         const num = String(i + 1).padStart(2, '0');
         zip.file(`slide-${num}.png`, blob);
 
         root.unmount();
         container.remove();
-        setProgress(Math.round(((i + 1) / carrossel.slides.length) * 100));
+        setProgress(Math.round(((i + 1) / slidesWithDataUrls.length) * 100));
       }
 
       offscreen.remove();
